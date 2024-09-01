@@ -15,70 +15,70 @@ cookie = str(config.get("cookie"))
 image = str(config.get("image"))
 upload_num = int(config.get("upload_num"))
 
-# Logging function
 def log(text):
     timestamp = datetime.datetime.utcfromtimestamp(time.time()).strftime("%H:%M:%S")
     print(f"[{timestamp}] {text}")
 
-# Welcome function
 def welcome(session):
     if not os.path.exists(image):
         log("No image found")
         quit()
     try:
-        response = session.get('https://www.roblox.com/mobileapi/userinfo')
-        response.raise_for_status()  # Raises HTTPError for bad responses
-        bot = response.json()["UserName"]
+        # Attempt to get user info from a different endpoint
+        response = session.get('https://users.roblox.com/v1/users/authenticated')
+        response.raise_for_status()
+        bot = response.json()["name"]
         log(f"Welcome `{bot}`")
     except requests.exceptions.HTTPError as e:
-        log(f"HTTP error: {e}")
-        quit()
-    except KeyError:
-        log("Invalid cookie or unexpected response format")
+        log(f"HTTP error occurred: {e}")
+        if response.status_code == 403:
+            log("Invalid cookie or authentication failed.")
         quit()
     except Exception as e:
         log(f"An error occurred: {e}")
         quit()
 
-# Get CSRF token function
 def get_token(session):
     try:
-        response = session.post('https://friends.roblox.com/v1/users/1/request-friendship')
+        # Attempt to get the CSRF token from the homepage or authenticated endpoint
+        response = session.get('https://www.roblox.com/', headers={"Referer": "https://www.roblox.com"})
         response.raise_for_status()
+
+        # Log response details for debugging
+        log(f"Response status: {response.status_code}")
+        log(f"Response headers: {response.headers}")
+        log(f"Response cookies: {response.cookies}")
+
+        # Check for CSRF token in headers and cookies
         if 'x-csrf-token' in response.headers:
             return response.headers['x-csrf-token']
+        elif 'x-csrf-token' in response.cookies:
+            return response.cookies['x-csrf-token']
         else:
-            log('x-csrf-token not found')
+            log('x-csrf-token not found in headers or cookies')
+            return None
     except requests.exceptions.RequestException as e:
-        log(f"Error fetching CSRF token: {e}")
+        log(f"Error getting X-CSRF-TOKEN: {e}")
+        return None
 
-# Upload decal function
 def upload_decal(cookie, location, name, session):
     try:
-        headers = {
-            "Requester": "Client",
-            "X-CSRF-TOKEN": get_token(session)
-        }
-        with open(location, 'rb') as file_data:
-            response = session.post(
-                f"https://data.roblox.com/data/upload/json?assetTypeId=13&name={name}&description=emppu",
-                data=file_data,
-                headers=headers
-            )
+        token = get_token(session)
+        if not token:
+            log("Failed to retrieve CSRF token. Skipping upload.")
+            return
+
+        headers = {"Requester": "Client", "X-CSRF-TOKEN": token}
+        with open(location, 'rb') as image_file:
+            response = session.post(f"https://data.roblox.com/data/upload/json?assetTypeId=13&name={name}&description=emppu", data=image_file, headers=headers)
         response.raise_for_status()
         log(f"Uploaded `{name}` successfully")
     except requests.exceptions.RequestException as e:
-        if response.status_code == 429:
-            log(f"Ratelimited, waiting 60 seconds")
-            time.sleep(60)
         log(f"Error sending the request: {e}")
+        if response.status_code == 429:
+            log("Rate limited, waiting 60 seconds")
+            time.sleep(60)
 
-# Remove old files
-for root, dirs, files in os.walk("final"):
-    for file in files:
-        os.remove(os.path.join(root, file))
-
-# Hash file function
 def hash_file(filename):
     h = hashlib.sha256()
     with open(filename, "rb") as file:
@@ -86,18 +86,30 @@ def hash_file(filename):
             h.update(chunk)
     return h.hexdigest()
 
-# Load word list and user agents
-with open("words.txt", "r") as file:
-    word_list = file.read().splitlines()
+# Clean up old files
+for root, dirs, files in os.walk("final"):
+    for file in files:
+        os.remove(os.path.join(root, file))
 
-with open("useragents.txt", "r") as file:
-    useragents = file.read().splitlines()
+# Read user agents and words
+try:
+    with open("useragents.txt", "r") as file:
+        useragents = file.read().splitlines()
+except FileNotFoundError:
+    log("useragents.txt not found")
+    quit()
+
+try:
+    with open("words.txt", "r") as file:
+        word_list = file.read().splitlines()
+except FileNotFoundError:
+    log("words.txt not found")
+    quit()
 
 # Main script execution
 with requests.Session() as session:
     session.cookies.update({".ROBLOSECURITY": cookie})
     welcome(session)
-    
     for i in range(upload_num):
         randomnum = random.randrange(0, 99999999999999)
         img = Image.open(image)
@@ -106,7 +118,7 @@ with requests.Session() as session:
         time.sleep(0.15)
         message = hash_file(f"final/{randomnum}.png")
         log(f"{message} - {randomnum}.png")
-    
+
     for root, dirs, files in os.walk("final"):
         for file in files:
             useragent = random.choice(useragents)
